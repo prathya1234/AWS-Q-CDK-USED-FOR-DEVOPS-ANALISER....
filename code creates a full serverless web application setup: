@@ -1,0 +1,100 @@
+from aws_cdk import (
+    Stack,
+    aws_lambda as _lambda,
+    aws_apigateway as apigateway,
+    aws_cloudfront as cloudfront,
+    aws_s3 as s3,
+    aws_s3_deployment as s3deploy,
+    RemovalPolicy,
+)
+from constructs import Construct
+
+class Ttp01Stack(Stack):
+
+    def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
+        # Lambda@Edge must be deployed in us-east-1
+        kwargs['env'] = {'region': 'us-east-1'}
+        super().__init__(scope, construct_id, **kwargs)
+
+        # Hello World Lambda function
+        hello_lambda = _lambda.Function(
+            self, "HelloWorldFunction",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="hello_world.lambda_handler",
+            code=_lambda.Code.from_asset("lambda")
+        )
+
+        # API Gateway
+        api = apigateway.LambdaRestApi(
+            self, "HelloWorldApi",
+            handler=hello_lambda
+        )
+        
+        # S3 bucket for static website
+        website_bucket = s3.Bucket(
+            self, "WebsiteBucket",
+            removal_policy=RemovalPolicy.DESTROY,
+            auto_delete_objects=True
+        )
+        
+        # Lambda@Edge function for viewer request
+        edge_function = _lambda.Function(
+            self, "ViewerRequestFunction",
+            runtime=_lambda.Runtime.PYTHON_3_9,
+            handler="index.lambda_handler",
+            code=_lambda.Code.from_inline("""
+import json
+
+def lambda_handler(event, context):
+    request = event['Records'][0]['cf']['request']
+    headers = request['headers']
+    
+    # Add security headers
+    headers['x-frame-options'] = [{'key': 'X-Frame-Options', 'value': 'DENY'}]
+    headers['x-content-type-options'] = [{'key': 'X-Content-Type-Options', 'value': 'nosniff'}]
+    headers['x-xss-protection'] = [{'key': 'X-XSS-Protection', 'value': '1; mode=block'}]
+    
+    # Redirect HTTP to HTTPS
+    if 'cloudfront-forwarded-proto' in headers:
+        if headers['cloudfront-forwarded-proto'][0]['value'] == 'http':
+            return {
+                'status': '301',
+                'statusDescription': 'Moved Permanently',
+                'headers': {
+                    'location': [{
+                        'key': 'Location',
+                        'value': f"https://{headers['host'][0]['value']}{request['uri']}"
+                    }]
+                }
+            }
+    
+    # Add default index.html for directory requests
+    if request['uri'].endswith('/'):
+        request['uri'] += 'index.html'
+    
+    return request
+            """)
+        )
+        
+        # CloudFront distribution
+        distribution = cloudfront.CloudFrontWebDistribution(
+            self, "WebsiteDistribution",
+            origin_configs=[
+                cloudfront.SourceConfiguration(
+                    s3_origin_source=cloudfront.S3OriginConfig(
+                        s3_bucket_source=website_bucket
+                    ),
+                    behaviors=[
+                        cloudfront.Behavior(
+                            is_default_behavior=True,
+                            lambda_function_associations=[
+                                cloudfront.LambdaFunctionAssociation(
+                                    event_type=cloudfront.LambdaEdgeEventType.VIEWER_REQUEST,
+                                    lambda_function=edge_function.current_version
+                                )
+                            ]
+                        )
+                    ]
+                )
+            ]
+        )
