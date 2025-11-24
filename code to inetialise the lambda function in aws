@@ -1,0 +1,10 @@
+sudo apt-get update
+sudo apt-get install -y nodejs npm
+sudo npm install -g aws-cdk
+cdk --version
+mkdir my-cdk-project
+cd my-cdk-project
+cdk init app --language=typescript
+cdk bootstrap
+
+COMMANDS T0 INTETALIZ THE LAMBDA FUNCTION IN CDK 
