@@ -7,4 +7,4 @@ cd my-cdk-project
 cdk init app --language=typescript
 cdk bootstrap
 
-COMMANDS T0 INTETALIZ THE LAMBDA FUNCTION IN CDK 
+These commands will install and set up AWS CDK on a Linux system, enabling you to start building infrastructure as code using AWS CDK
